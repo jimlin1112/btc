@@ -37,11 +37,9 @@ def load_and_process_data(file_path):
         return None
 
 # 網頁 UI 區塊
-st.title("Robo-Advisor: DAT.co (MSTR) 專業監控平台")
+st.title("Robo-Advisor: DAT.co (MSTR) 監控平台")
 st.markdown("""
-本儀表板採用更嚴謹的財務模型監控 MicroStrategy (MSTR) 的估值：
-* **動態股本**：追蹤每日流通股數變化。
-* **權益淨值 (Equity NAV)**：扣除公司債務與優先股後的真實比特幣價值。
+監控 MicroStrategy (MSTR) 的估值：
 """)
 
 # 載入資料
@@ -49,26 +47,40 @@ csv_filename = "MSTR_20250408-20260408_1day.csv"
 df = load_and_process_data(csv_filename)
 
 if df is not None:
-    # 建立側邊欄過濾器
-    st.sidebar.header("設定")
-    show_raw_nav = st.sidebar.checkbox("顯示原始 m_nav (CSV 預設)", value=True)
+    # 建立側邊欄設定
+    # st.sidebar.header("設定")
+    # st.sidebar.info("圖表目前固定顯示 Premium to Equity NAV 與 m_nav 以供對比。")
     
-    # 繪製折線圖
-    st.subheader("MSTR 嚴謹溢價率走勢 (Premium to Equity NAV)")
+    # 繪製圖表
+    st.subheader("MSTR 溢價率對比走勢")
     
-    # 準備繪圖資料
+    # 建立主折線圖 (Premium to NAV Rigorous)
     fig = px.line(
         df, 
         x="Date", 
         y="Premium_to_NAV_Rigorous", 
-        title="MicroStrategy Premium to Equity NAV (Adjusted for Debt & Preferred Stock)",
-        labels={"Premium_to_NAV_Rigorous": "嚴謹溢價比例", "Date": "日期"}
+        title="MicroStrategy Premium to Equity NAV and m_nav",
+        labels={"Premium_to_NAV_Rigorous": "溢價比例", "Date": "日期"}
     )
     
-    if show_raw_nav:
-        fig.add_scatter(x=df["Date"], y=df["m_nav"], name="CSV 預設 m_nav", line=dict(dash='dot'))
+    # 指定主折線的名字為 "Premium to Equity NAV" 並顯示在圖例
+    fig.update_traces(name="Premium to Equity NAV", showlegend=True)
+    
+    # 固定添加 m_nav 折線，不設開關
+    fig.add_scatter(
+        x=df["Date"], 
+        y=df["m_nav"], 
+        name="m_nav", 
+        line=dict(dash='dot'),
+        mode='lines'
+    )
 
+    # 添加基準線
     fig.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="NAV 基準線 (1.0)")
+    
+    # 更新圖例佈局確保易於閱讀
+    fig.update_layout(legend_title_text='數據指標')
+    
     st.plotly_chart(fig, use_container_width=True)
 
     # 顯示關鍵數據指標
@@ -81,5 +93,5 @@ if df is not None:
 
     # 顯示數據表
     st.subheader("詳細財務數據")
-    display_cols = ["Date", "close", "market_cap", "btc_holdings", "btc_nav", "debt", "pref", "equity_nav", "Premium_to_NAV_Rigorous"]
+    display_cols = ["Date", "close", "market_cap", "btc_holdings", "btc_nav", "debt", "pref", "equity_nav", "Premium_to_NAV_Rigorous", "m_nav"]
     st.dataframe(df[display_cols].sort_values(by="Date", ascending=False))
