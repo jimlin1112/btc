@@ -1,94 +1,85 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # 設定網頁標題與排版
-st.set_page_config(page_title="DAT.co 指標追蹤", layout="wide")
+st.set_page_config(page_title="DAT.co 高級指標追蹤", layout="wide")
 
-# 使用快取，避免每次網頁重整都重新抓取資料
 @st.cache_data(ttl=3600)
-def fetch_and_calculate_nav():
-    end_date = datetime.today().strftime('%Y-%m-%d')
-    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    
-    mstr_data = yf.download("MSTR", start=start_date, end=end_date)
-    btc_data = yf.download("BTC-USD", start=start_date, end=end_date)
-
-    mstr_series = mstr_data["Close"].squeeze()
-    btc_series = btc_data["Close"].squeeze()
-
-    mstr_series.name = "MSTR_Price"
-    btc_series.name = "BTC_Price"
-
-    # 這裡已經加入了 sort=False 修正警告
-    df = pd.concat([mstr_series, btc_series], axis=1, sort=False).dropna()
-    
-    # 統一將 yfinance 抓下來的日期索引標準化 (去除時區與具體時間，只留日期)
-    df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
-
-    # 讀取本地的 MSTR 持有比特幣 CSV 資料
+def load_and_process_data(file_path):
     try:
-        csv_data = pd.read_csv("MSTR_20250408-20260408_1day.csv")
-        # 將 timestamp 轉換成 datetime 格式並標準化為只有日期
-        csv_data["Date"] = pd.to_datetime(csv_data["timestamp"]).dt.tz_localize(None).dt.normalize()
-        # 提取我們需要的 Date 與 btc_holdings，並將日期設為索引以便合併
-        holdings_df = csv_data[["Date", "btc_holdings"]].set_index("Date")
+        # 讀取 CSV 檔案
+        df = pd.read_csv(file_path)
         
-        # 將動態的比特幣持有量合併進主資料表
-        df = df.join(holdings_df, how="left")
+        # 標準化日期格式
+        df["Date"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None).dt.normalize()
         
-        # 針對沒有交易資料的週末或假日，使用前一天的持有量進行填補 (forward fill)，
-        # 若最前面有空值則使用後一天的資料填補 (backward fill)
-        df["btc_holdings"] = df["btc_holdings"].ffill().bfill()
+        # 1. 動態計算流通股數 (反映 ATM 增資稀釋狀況)
+        # 公式：市值 / 收盤價
+        df["implied_shares"] = df["market_cap"] / df["close"]
         
+        # 2. 嚴謹的資產淨值 (Equity NAV) 計算
+        # 考慮了資產負債表上的債務 (debt) 與優先股 (pref)
+        # 公式：比特幣持倉價值 - 總債務 - 優先股
+        df["equity_nav"] = df["btc_nav"] - df["debt"] - df["pref"]
+        
+        # 3. 計算嚴謹溢價率 (Rigorous Premium to NAV)
+        # 公式：市值 / 股東權益淨值
+        df["Premium_to_NAV_Rigorous"] = df["market_cap"] / df["equity_nav"]
+        
+        # 排序日期
+        df = df.sort_values(by="Date")
+        
+        return df
     except FileNotFoundError:
-        # 若找不到 CSV 檔案，設定一個備用的預設固定值並發出警告
-        st.warning("找不到 'MSTR_20250408-20260408_1day.csv'，將使用預設固定持有量。")
-        df["btc_holdings"] = 214246
-
-    mstr_shares_outstanding = 17000000 
-
-    df["MSTR_Market_Cap"] = df["MSTR_Price"] * mstr_shares_outstanding
-    
-    # 這裡改成乘以每日動態變化的 btc_holdings
-    df["BTC_Holdings_Value"] = df["BTC_Price"] * df["btc_holdings"]
-    df["Premium_to_NAV"] = df["MSTR_Market_Cap"] / df["BTC_Holdings_Value"]
-
-    # 將索引 (日期) 變成一個欄位，方便繪圖
-    df = df.reset_index()
-    # 確保日期欄位名稱正確，yfinance 預設索引名稱通常是 Date
-    if "Date" not in df.columns and "index" in df.columns:
-        df = df.rename(columns={"index": "Date"})
-        
-    return df
+        st.error(f"找不到檔案: {file_path}")
+        return None
 
 # 網頁 UI 區塊
-st.title("Robo-Advisor: DAT.co (MSTR) 指標監控平台")
+st.title("Robo-Advisor: DAT.co (MSTR) 專業監控平台")
 st.markdown("""
-這是一個監控 MicroStrategy (MSTR) **Premium to NAV (資產淨值溢價)** 的儀表板。
-當溢價大於 1 時，代表市場願意用比實際比特幣價值更高的價格購買 MSTR 股票。
+本儀表板採用更嚴謹的財務模型監控 MicroStrategy (MSTR) 的估值：
+* **動態股本**：追蹤每日流通股數變化。
+* **權益淨值 (Equity NAV)**：扣除公司債務與優先股後的真實比特幣價值。
 """)
 
 # 載入資料
-with st.spinner("正在抓取最新市場數據..."):
-    df = fetch_and_calculate_nav()
+csv_filename = "MSTR_20250408-20260408_1day.csv"
+df = load_and_process_data(csv_filename)
 
-# 繪製折線圖
-st.subheader("MSTR Premium to NAV 歷史走勢")
-fig = px.line(
-    df, 
-    x="Date", 
-    y="Premium_to_NAV", 
-    title="MicroStrategy Premium to NAV",
-    labels={"Premium_to_NAV": "溢價比例", "Date": "日期"}
-)
-# 添加一條 y=1 的基準線，方便觀察何時處於折價/溢價
-fig.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="NAV 基準線 (1.0)")
+if df is not None:
+    # 建立側邊欄過濾器
+    st.sidebar.header("設定")
+    show_raw_nav = st.sidebar.checkbox("顯示原始 m_nav (CSV 預設)", value=True)
+    
+    # 繪製折線圖
+    st.subheader("MSTR 嚴謹溢價率走勢 (Premium to Equity NAV)")
+    
+    # 準備繪圖資料
+    fig = px.line(
+        df, 
+        x="Date", 
+        y="Premium_to_NAV_Rigorous", 
+        title="MicroStrategy Premium to Equity NAV (Adjusted for Debt & Preferred Stock)",
+        labels={"Premium_to_NAV_Rigorous": "嚴謹溢價比例", "Date": "日期"}
+    )
+    
+    if show_raw_nav:
+        fig.add_scatter(x=df["Date"], y=df["m_nav"], name="CSV 預設 m_nav", line=dict(dash='dot'))
 
-st.plotly_chart(fig, width="stretch")
+    fig.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="NAV 基準線 (1.0)")
+    st.plotly_chart(fig, use_container_width=True)
 
-# 顯示原始數據表
-st.subheader("原始數據")
-st.dataframe(df.sort_values(by="Date", ascending=False).head(10))
+    # 顯示關鍵數據指標
+    col1, col2, col3, col4 = st.columns(4)
+    latest = df.iloc[-1]
+    col1.metric("最新收盤價", f"${latest['close']:,.2f}")
+    col2.metric("比特幣持有量", f"{latest['btc_holdings']:,} BTC")
+    col3.metric("總債務 (Debt)", f"${latest['debt']/1e9:.2f}B")
+    col4.metric("嚴謹溢價率", f"{latest['Premium_to_NAV_Rigorous']:.2f}x")
+
+    # 顯示數據表
+    st.subheader("詳細財務數據")
+    display_cols = ["Date", "close", "market_cap", "btc_holdings", "btc_nav", "debt", "pref", "equity_nav", "Premium_to_NAV_Rigorous"]
+    st.dataframe(df[display_cols].sort_values(by="Date", ascending=False))
