@@ -12,7 +12,7 @@ def fetch_and_calculate_nav():
     start_date = "2023-01-01"
     end_date = "2024-04-01" 
     
-    mstr_data = yf.download("MSTR", start=start_date, end=end_date)
+    mstr_data = yf.download("MSTR", start=start_date, end=end_date) 
     btc_data = yf.download("BTC-USD", start=start_date, end=end_date)
 
     mstr_series = mstr_data["Close"].squeeze()
