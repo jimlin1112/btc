@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
+from datetime import datetime, timedelta
 
 # 設定網頁標題與排版
 st.set_page_config(page_title="DAT.co 指標追蹤", layout="wide")
@@ -9,8 +10,8 @@ st.set_page_config(page_title="DAT.co 指標追蹤", layout="wide")
 # 使用快取，避免每次網頁重整都重新抓取資料
 @st.cache_data(ttl=3600)
 def fetch_and_calculate_nav():
-    start_date = "2023-01-01"
-    end_date = "2024-04-01" 
+    end_date = datetime.today().strftime('%Y-%m-%d')
+    start_date = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
     
     mstr_data = yf.download("MSTR", start=start_date, end=end_date)
     btc_data = yf.download("BTC-USD", start=start_date, end=end_date)
